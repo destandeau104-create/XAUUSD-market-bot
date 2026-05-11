@@ -339,12 +339,11 @@ def main():
 
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
-    import os
-    print("\n" + "="*30)
-    print(f"🔗 COPIE CE LIEN : https://{os.environ.get('REPL_SLUG')}.{os.environ.get('REPL_OWNER')}.repl.co")
-    print("="*30 + "\n")
-    keep_alive.keep_alive()  # <--- Ajoute cette ligne ici
-    print("🚀 Bot XAU/USD démarré")
-    # ... le reste de ton code
-   
-    main()
+    try:
+        from keep_alive import keep_alive
+        keep_alive()
+        print("🚀 Bot XAU/USD démarré et en attente de messages...")
+        bot.polling(none_stop=True)
+    except Exception as e:
+        print(f"❌ Erreur au lancement : {e}")
+
