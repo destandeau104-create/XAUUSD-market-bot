@@ -4,8 +4,8 @@ import threading
 from datetime import datetime
 import pytz
 import pandas as pd
+import numpy as np
 import yfinance as yf
-import pandas_ta as ta
 import telebot
 from flask import Flask
 
@@ -47,14 +47,33 @@ app.run(host=“0.0.0.0”, port=8080, debug=False, use_reloader=False)
 
 # ============================================================
 
-# STRATEGIE (NE PAS MODIFIER)
+# INDICATEURS TECHNIQUES (sans pandas_ta)
+
+# ============================================================
+
+def calc_ema(series, length):
+return series.ewm(span=length, adjust=False).mean()
+
+def calc_rsi(series, length=14):
+delta  = series.diff()
+gain   = delta.clip(lower=0)
+loss   = -delta.clip(upper=0)
+avg_g  = gain.ewm(com=length - 1, adjust=False).mean()
+avg_l  = loss.ewm(com=length - 1, adjust=False).mean()
+rs     = avg_g / avg_l.replace(0, np.nan)
+return 100 - (100 / (1 + rs))
+
+# ============================================================
+
+# STRATEGIE (indicateurs identiques, sans pandas_ta)
 
 # ============================================================
 
 def is_in_session():
-now = datetime.now(PARIS_TZ)
-matin = (now.hour, now.minute) >= (9, 0) and (now.hour, now.minute) <= (11, 30)
-aprem = (now.hour, now.minute) >= (14, 30) and (now.hour, now.minute) <= (17, 30)
+now   = datetime.now(PARIS_TZ)
+h, m  = now.hour, now.minute
+matin = (h, m) >= (9, 0) and (h, m) <= (11, 30)
+aprem = (h, m) >= (14, 30) and (h, m) <= (17, 30)
 return matin or aprem
 
 def get_data(ticker, interval, period):
@@ -72,32 +91,29 @@ print(“Erreur get_data “ + ticker + “ : “ + str(e), flush=True)
 return pd.DataFrame()
 
 def analyse_market():
-# H4 et H1
+# H1 pour EMA200 H4 et EMA50 H1
 df_h1 = get_data(“XAUUSD=X”, “1h”, “20d”)
 if len(df_h1) < 200:
 print(“df_h1 insuffisant : “ + str(len(df_h1)) + “ bougies”, flush=True)
 return None
 
 ```
-ema200_h4 = ta.ema(df_h1["Close"].resample("4h").last().dropna(), length=200)
-ema50_h1  = ta.ema(df_h1["Close"], length=50)
+close_h1 = df_h1["Close"].squeeze()
 
-if ema200_h4 is None or ema50_h1 is None:
-    print("EMA calcul echoue", flush=True)
-    return None
+ema200_h4 = calc_ema(
+    close_h1.resample("4h").last().dropna(), 200
+)
+ema50_h1 = calc_ema(close_h1, 50)
 
-# M5 et M15
+# M5 pour RSI M15 et RSI M5
 df_m5 = get_data("XAUUSD=X", "5m", "2d")
 if df_m5.empty:
     print("df_m5 vide", flush=True)
     return None
 
-rsi_m15 = ta.rsi(df_m5["Close"].resample("15m").last().dropna(), length=14)
-rsi_m5  = ta.rsi(df_m5["Close"], length=14)
-
-if rsi_m15 is None or rsi_m5 is None:
-    print("RSI calcul echoue", flush=True)
-    return None
+close_m5  = df_m5["Close"].squeeze()
+rsi_m15   = calc_rsi(close_m5.resample("15min").last().dropna(), 14)
+rsi_m5    = calc_rsi(close_m5, 14)
 
 # Volume GLD
 df_gld = get_data("GLD", "5m", "2d")
@@ -105,17 +121,17 @@ if df_gld.empty:
     print("GLD vide", flush=True)
     return None
 
-vol_sma = df_gld["Volume"].rolling(20).mean()
+vol_sma = df_gld["Volume"].squeeze().rolling(20).mean()
 
 # Valeurs actuelles
-p         = float(df_m5["Close"].iloc[-1])
-e200      = float(ema200_h4.iloc[-1])
-e50       = float(ema50_h1.iloc[-1])
-r15       = float(rsi_m15.iloc[-1])
-r5_prev   = float(rsi_m5.iloc[-2])
-r5_curr   = float(rsi_m5.iloc[-1])
-vol_curr  = float(df_gld["Volume"].iloc[-1])
-vol_avg   = float(vol_sma.iloc[-1])
+p        = float(close_m5.iloc[-1])
+e200     = float(ema200_h4.iloc[-1])
+e50      = float(ema50_h1.iloc[-1])
+r15      = float(rsi_m15.iloc[-1])
+r5_prev  = float(rsi_m5.iloc[-2])
+r5_curr  = float(rsi_m5.iloc[-1])
+vol_curr = float(df_gld["Volume"].squeeze().iloc[-1])
+vol_avg  = float(vol_sma.iloc[-1])
 
 print(
     "Prix=" + str(round(p, 2)) +
@@ -184,7 +200,6 @@ while True:
 
             if signal:
                 direction = "ACHAT" if signal["dir"] == "BUY" else "VENTE"
-                emoji     = "BUY" if signal["dir"] == "BUY" else "SELL"
                 msg = (
                     "SIGNAL XAU/USD - " + direction + "\n"
                     "Entree : " + str(signal["p"]) + "\n"
@@ -193,7 +208,7 @@ while True:
                     "Lot    : " + str(LOT_SIZE)
                 )
                 bot.send_message(CHAT_ID, msg)
-                print("[" + now_str + "] Signal envoye : " + emoji + " @ " + str(signal["p"]), flush=True)
+                print("[" + now_str + "] Signal envoye : " + signal["dir"] + " @ " + str(signal["p"]), flush=True)
             else:
                 print("[" + now_str + "] Pas de signal", flush=True)
         else:
