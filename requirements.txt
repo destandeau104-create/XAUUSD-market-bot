@@ -1,5 +1,0 @@
-yfinance
-pandas
-pytz
-requests
-numpy
